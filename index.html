@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tire Tread Wear &amp; Replacement Safety Checker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-gray-800">
+  <div class="max-w-3xl mx-auto px-4 py-8">
+    <header class="mb-8 text-center">
+      <h1 class="text-3xl font-bold text-slate-700">🔧 Tire Tread Safety Checker</h1>
+      <p class="text-slate-500 mt-1">Enter tread depths to assess safety, wear patterns, and replacement urgency</p>
+    </header>
+
+    <!-- Depth thresholds legend -->
+    <div class="flex flex-wrap gap-3 mb-6 justify-center text-xs">
+      <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full bg-green-500"></div><span>Safe (≥4mm)</span></div>
+      <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full bg-yellow-400"></div><span>Monitor (3–4mm)</span></div>
+      <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full bg-orange-500"></div><span>Replace Soon (1.6–3mm)</span></div>
+      <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-full bg-red-600"></div><span>Illegal (&lt;1.6mm)</span></div>
+    </div>
+
+    <!-- Tires Grid -->
+    <div class="grid grid-cols-2 gap-4 mb-6" id="tiresGrid">
+    </div>
+
+    <!-- Calculate Button -->
+    <button id="calcBtn" class="w-full bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-xl mb-6 transition-colors" aria-label="Analyse tires">
+      Analyse Tires
+    </button>
+
+    <!-- Overall Summary -->
+    <div id="summary" class="bg-white rounded-xl shadow p-5 mb-6 hidden">
+      <h2 class="text-sm font-semibold text-gray-600 mb-4">Overall Assessment</h2>
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div id="overallRating" class="rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-500 mb-1">Overall Urgency</div>
+          <div id="urgencyText" class="text-xl font-bold"></div>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-500 mb-1">Estimated Remaining</div>
+          <div id="remainingMiles" class="text-xl font-bold text-blue-600"></div>
+          <div class="text-xs text-gray-400">km (avg worst tire)</div>
+        </div>
+      </div>
+      <div id="tireResults" class="space-y-3"></div>
+    </div>
+
+    <!-- Uneven Wear Diagnosis -->
+    <div id="wearDiagnosis" class="bg-white rounded-xl shadow p-5 hidden">
+      <h2 class="text-sm font-semibold text-gray-600 mb-3">Uneven Wear Pattern Diagnosis</h2>
+      <div id="wearList" class="space-y-2"></div>
+    </div>
+  </div>
+
+  <script>
+    const TIRES = [
+      { id: 'fl', label: 'Front Left', position: 'FL' },
+      { id: 'fr', label: 'Front Right', position: 'FR' },
+      { id: 'rl', label: 'Rear Left', position: 'RL' },
+      { id: 'rr', label: 'Rear Right', position: 'RR' }
+    ];
+
+    const WEAR_THRESHOLDS = [
+      { max: 1.6, label: 'ILLEGAL', color: 'bg-red-600 text-white', urgency: 4 },
+      { max: 3.0, label: 'REPLACE SOON', color: 'bg-orange-500 text-white', urgency: 3 },
+      { max: 4.0, label: 'MONITOR', color: 'bg-yellow-400 text-gray-800', urgency: 2 },
+      { max: 99,  label: 'SAFE', color: 'bg-green-500 text-white', urgency: 1 }
+    ];
+
+    function getThreshold(mm) {
+      for (const t of WEAR_THRESHOLDS) {
+        if (mm < t.max) return t;
+      }
+      return WEAR_THRESHOLDS[WEAR_THRESHOLDS.length - 1];
+    }
+
+    function estimateRemaining(avgMm) {
+      // Rough heuristic: new tyre ~8mm, wear rate ~1mm per ~15,000km
+      const mmLeft = Math.max(avgMm - 1.6, 0);
+      return Math.round(mmLeft * 15000);
+    }
+
+    function diagnosWear(inner, center, outer) {
+      const issues = [];
+      const THRESH = 0.5;
+      if (center - inner > THRESH && center - outer > THRESH)
+        issues.push({ pattern: 'Centre wear', cause: 'Tyre over-inflated — reduce pressure', icon: '⬆️' });
+      if (inner - center > THRESH && outer - center > THRESH)
+        issues.push({ pattern: 'Edge wear (both sides)', cause: 'Tyre under-inflated — increase pressure', icon: '⬇️' });
+      if (inner - outer > THRESH)
+        issues.push({ pattern: 'Inner-edge wear', cause: 'Excessive negative camber or worn suspension', icon: '↙️' });
+      if (outer - inner > THRESH)
+        issues.push({ pattern: 'Outer-edge wear', cause: 'Excessive positive camber or aggressive cornering', icon: '↗️' });
+      if (issues.length === 0) issues.push({ pattern: 'Even wear', cause: 'No significant uneven wear detected', icon: '✅' });
+      return issues;
+    }
+
+    // Build tire cards
+    const grid = document.getElementById('tiresGrid');
+    TIRES.forEach(tire => {
+      const card = document.createElement('div');
+      card.className = 'bg-white rounded-xl shadow p-5';
+      card.innerHTML = '';
+
+      const title = document.createElement('h2');
+      title.className = 'text-sm font-semibold text-gray-600 mb-3';
+      title.textContent = tire.label + ' (' + tire.position + ')';
+      card.appendChild(title);
+
+      ['inner','center','outer'].forEach(groove => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-3 mb-2';
+        const lbl = document.createElement('label');
+        lbl.className = 'text-xs text-gray-500 w-14 shrink-0';
+        lbl.textContent = groove.charAt(0).toUpperCase() + groove.slice(1);
+        lbl.htmlFor = tire.id + '_' + groove;
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.id = tire.id + '_' + groove;
+        inp.min = '0'; inp.max = '12'; inp.step = '0.1';
+        inp.placeholder = '6.5';
+        inp.className = 'flex-1 border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-400';
+        inp.setAttribute('aria-label', tire.label + ' ' + groove + ' tread depth mm');
+        const unit = document.createElement('span');
+        unit.className = 'text-xs text-gray-400';
+        unit.textContent = 'mm';
+        const dot = document.createElement('div');
+        dot.id = tire.id + '_' + groove + '_dot';
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-gray-200 shrink-0';
+        inp.addEventListener('input', () => {
+          const v = parseFloat(inp.value);
+          if (isNaN(v)) { dot.className = 'w-2.5 h-2.5 rounded-full bg-gray-200 shrink-0'; return; }
+          const t = getThreshold(v);
+          const colorMap = {
+            'SAFE': 'bg-green-500',
+            'MONITOR': 'bg-yellow-400',
+            'REPLACE SOON': 'bg-orange-500',
+            'ILLEGAL': 'bg-red-600'
+          };
+          dot.className = 'w-2.5 h-2.5 rounded-full shrink-0 ' + (colorMap[t.label] || 'bg-gray-200');
+        });
+        row.appendChild(lbl);
+        row.appendChild(inp);
+        row.appendChild(unit);
+        row.appendChild(dot);
+        card.appendChild(row);
+      });
+      grid.appendChild(card);
+    });
+
+    document.getElementById('calcBtn').addEventListener('click', () => {
+      const results = [];
+      let maxUrgency = 0;
+
+      TIRES.forEach(tire => {
+        const get = g => parseFloat(document.getElementById(tire.id + '_' + g).value);
+        const inner = get('inner'), center = get('center'), outer = get('outer');
+        if (isNaN(inner) && isNaN(center) && isNaN(outer)) {
+          results.push({ ...tire, skipped: true });
+          return;
+        }
+        const vals = [inner, center, outer].filter(v => !isNaN(v));
+        const avg = vals.reduce((s,v)=>s+v,0)/vals.length;
+        const min = Math.min(...vals);
+        const thresh = getThreshold(min);
+        const wear = diagnosWear(
+          isNaN(inner) ? avg : inner,
+          isNaN(center) ? avg : center,
+          isNaN(outer) ? avg : outer
+        );
+        if (thresh.urgency > maxUrgency) maxUrgency = thresh.urgency;
+        results.push({ ...tire, inner, center, outer, avg, min, thresh, wear, skipped: false });
+      });
+
+      const summaryEl = document.getElementById('summary');
+      summaryEl.classList.remove('hidden');
+      const diagEl = document.getElementById('wearDiagnosis');
+      diagEl.classList.remove('hidden');
+
+      // Overall urgency
+      const urgencyInfo = WEAR_THRESHOLDS.find(t => t.urgency === maxUrgency) || WEAR_THRESHOLDS[3];
+      const overallEl = document.getElementById('overallRating');
+      overallEl.className = `rounded-xl p-4 text-center ${urgencyInfo.color}`;
+      document.getElementById('urgencyText').textContent = urgencyInfo.label;
+
+      // Remaining mileage (worst non-skipped tire)
+      const nonSkipped = results.filter(r => !r.skipped);
+      if (nonSkipped.length) {
+        const worstMin = Math.min(...nonSkipped.map(r => r.min));
+        const worstAvg = nonSkipped.reduce((s,r)=>s+r.avg,0)/nonSkipped.length;
+        document.getElementById('remainingMiles').textContent = estimateRemaining(worstMin).toLocaleString() + ' km';
+      }
+
+      // Per-tire results
+      const tireResults = document.getElementById('tireResults');
+      tireResults.innerHTML = '';
+      results.forEach(r => {
+        if (r.skipped) return;
+        const row = document.createElement('div');
+        row.className = 'border border-gray-100 rounded-lg p-3';
+        const header = document.createElement('div');
+        header.className = 'flex items-center justify-between mb-1';
+        const hn = document.createElement('span');
+        hn.className = 'text-sm font-semibold text-gray-700';
+        hn.textContent = r.label;
+        const badge = document.createElement('span');
+        badge.className = `text-xs px-2 py-0.5 rounded-full font-semibold ${r.thresh.color}`;
+        badge.textContent = r.thresh.label;
+        header.appendChild(hn);
+        header.appendChild(badge);
+        row.appendChild(header);
+
+        const depths = document.createElement('div');
+        depths.className = 'flex gap-4 text-xs text-gray-500';
+        [['Inner', r.inner],['Center', r.center],['Outer', r.outer]].forEach(([lbl,val]) => {
+          const span = document.createElement('span');
+          span.textContent = lbl + ': ' + (isNaN(val) ? '—' : val.toFixed(1) + 'mm');
+          if (!isNaN(val) && val < 1.6) span.className = 'text-red-600 font-semibold';
+          else if (!isNaN(val) && val < 3) span.className = 'text-orange-500 font-semibold';
+          depths.appendChild(span);
+        });
+        row.appendChild(depths);
+        tireResults.appendChild(row);
+      });
+
+      // Wear diagnosis
+      const wearList = document.getElementById('wearList');
+      wearList.innerHTML = '';
+      results.filter(r => !r.skipped).forEach(r => {
+        const section = document.createElement('div');
+        section.className = 'mb-2';
+        const title = document.createElement('div');
+        title.className = 'text-xs font-semibold text-gray-600 mb-1';
+        title.textContent = r.label;
+        section.appendChild(title);
+        r.wear.forEach(w => {
+          const item = document.createElement('div');
+          item.className = 'flex items-start gap-2 text-xs text-gray-600 ml-2';
+          const icon = document.createElement('span');
+          icon.textContent = w.icon;
+          const text = document.createElement('span');
+          text.textContent = w.pattern + ' — ' + w.cause;
+          item.appendChild(icon); item.appendChild(text);
+          section.appendChild(item);
+        });
+        wearList.appendChild(section);
+      });
+    });
+  </script>
+</body>
+</html>
